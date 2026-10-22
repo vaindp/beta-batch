@@ -1,0 +1,6 @@
+{
+  "name": "Beta Batch · Biên tập truyện & Sáng tác AI",
+  "description": "Phần mềm biên tập, chuẩn hóa đại từ xưng hô tiểu thuyết thuần Việt, so sánh thay đổi văn bản và xử lý Batch API.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
