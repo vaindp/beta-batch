@@ -1,4 +1,5 @@
 import { MODEL_OPTIONS, isSelectableModel } from '../ai/models';
+import { normalizeStoryContext, type EditingRules } from '../ai/story-context';
 export const BATCH_MODEL = 'gemini-4-argon';
 export const BATCH_MODELS = MODEL_OPTIONS;
 export function normalizeBatchModel(value: unknown): string {
@@ -19,7 +20,7 @@ export interface BatchChapter {
   status: string;
   batchResultId?: string;
 }
-export interface BatchRules { pronounRules: string; addressingRules: string }
+export interface BatchRules extends EditingRules {}
 export interface BatchRow {
   chapter: BatchChapter;
   promptHash: string;
@@ -157,6 +158,11 @@ export function createJobBody(run: BatchRun) {
 export const terminalState = (state?: string) =>
   !!state && ['JOB_STATE_SUCCEEDED', 'JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_EXPIRED', 'JOB_STATE_PARTIALLY_SUCCEEDED'].includes(state);
 
+export function canDeleteRunHistory(run: BatchRun): boolean {
+  if (run.phase === 'submitting' || run.phase === 'unknown') return false;
+  return run.job ? terminalState(run.job.state) : run.phase === 'prepared';
+}
+
 /** Google may reorder output lines and augment echoed requests. Match only the exact input text. */
 export async function parseOutputs(run: BatchRun, files: string[]): Promise<{ results: BatchResult[]; warnings: string[] }> {
   const byHash = new Map(run.rows.map(row => [row.promptHash, row]));
@@ -205,7 +211,8 @@ export function importDisposition(run: BatchRun, row: BatchRow, current: BatchCh
     || current.editedContent !== row.chapter.editedContent
     || current.status !== row.chapter.status
     || rules.pronounRules !== run.rules.pronounRules
-    || rules.addressingRules !== run.rules.addressingRules) return 'conflict';
+    || rules.addressingRules !== run.rules.addressingRules
+    || normalizeStoryContext(rules.storyContext) !== normalizeStoryContext(run.rules.storyContext)) return 'conflict';
   return 'ready';
 }
 
@@ -215,6 +222,7 @@ export async function validateBackup(value: unknown): Promise<BatchRun> {
     || !/^[a-zA-Z0-9-]+$/.test(run.projectId) || normalizeBucket(run.bucket) !== run.bucket
     || !Array.isArray(run.rows) || !run.rows.length || run.rows.length > 200_000
     || typeof run.rules?.pronounRules !== 'string' || typeof run.rules?.addressingRules !== 'string'
+    || (run.rules.storyContext !== undefined && run.rules.storyContext !== normalizeStoryContext(run.rules.storyContext))
     || !['prepared', 'submitting', 'unknown', 'submitted'].includes(run.phase)) throw new Error('Bản sao job không hợp lệ.');
   const ids = new Set<string>();
   for (const row of run.rows) {

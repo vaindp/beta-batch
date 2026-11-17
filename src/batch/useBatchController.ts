@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  formatDuration, importDisposition, parseOutputs, prepareRun, terminalState,
+  canDeleteRunHistory, formatDuration, importDisposition, parseOutputs, prepareRun, terminalState,
   type BatchChapter, type BatchRules, type BatchRun, type ThinkingLevel,
 } from './batch-core';
 import { VertexBatchClient, GoogleBatchError, authFromJSON } from './vertex-batch';
-import { loadRuns, saveRun } from './batch-store';
+import { loadRuns, saveRun, deleteRunHistory } from './batch-store';
 import { useBatchModel } from './BatchModelSettings';
 
 interface BatchControllerProps {
@@ -15,7 +15,7 @@ interface BatchControllerProps {
   promptFor: (text: string) => string;
 }
 const defaultServices = {
-  loadRuns, saveRun,
+  loadRuns, saveRun, deleteRunHistory,
   createClient: (credentials: string) => new VertexBatchClient(authFromJSON(credentials)),
 };
 
@@ -36,6 +36,7 @@ export function useBatchController(props: BatchControllerProps, services = defau
   const [message, setMessage] = useState('');
   const [manualName, setManualName] = useState('');
   const [elapsedTimeStr, setElapsedTimeStr] = useState('');
+  const [pendingDeletion, setPendingDeletion] = useState<string[]>([]);
   const busyRef = useRef(false);
   const selectedOnce = useRef(false);
   useEffect(() => { localStorage.setItem('beta-batch-bucket', bucket); }, [bucket]);
@@ -81,6 +82,31 @@ export function useBatchController(props: BatchControllerProps, services = defau
     busyRef.current = true; setBusy(label); setError(''); setMessage('');
     try { await action(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { busyRef.current = false; setBusy(''); }
+  }
+  const deletableFinishedRuns = runs.filter(run => run.job && terminalState(run.job.state) && canDeleteRunHistory(run));
+  function requestHistoryDeletion(ids: string[]) {
+    if (busyRef.current) return;
+    const targets = runs.filter(run => ids.includes(run.id));
+    if (!targets.length || targets.some(run => !canDeleteRunHistory(run))) {
+      setError('Chỉ xóa được job đã kết thúc hoặc chưa gửi. Cập nhật hoặc hủy job đang chạy trước.');
+      return;
+    }
+    setPendingDeletion(targets.map(run => run.id));
+  }
+  async function confirmHistoryDeletion() {
+    const ids = [...pendingDeletion];
+    if (!ids.length) return;
+    await perform('Đang xóa lịch sử job…', async () => {
+      if (runs.some(run => ids.includes(run.id) && !canDeleteRunHistory(run))) {
+        throw new Error('Trạng thái job đã thay đổi. Cập nhật job trước khi xóa lịch sử.');
+      }
+      await services.deleteRunHistory(ids);
+      const remaining = runs.filter(run => !ids.includes(run.id));
+      setRuns(remaining);
+      if (ids.includes(activeId)) setActiveId(remaining[0]?.id || '');
+      setPendingDeletion([]);
+      setMessage(`Đã xóa ${ids.length} bản ghi lịch sử trên trình duyệt. Nội dung truyện và dữ liệu trên Google Cloud được giữ nguyên.`);
+    });
   }
   async function refresh(run: BatchRun) {
     if (!run.job) return;
@@ -186,6 +212,10 @@ export function useBatchController(props: BatchControllerProps, services = defau
     busy, error, message, setMessage, manualName, setManualName, elapsedTimeStr,
     lockedIds, available, selectedChapters, anyBusy, ready, isTerminal, isRunning,
     persist, perform, client, refresh, submit, readOutputs,
+    pendingDeletion, requestHistoryDeletion, confirmHistoryDeletion,
+    cancelHistoryDeletion: () => setPendingDeletion([]),
+    canDeleteActiveHistory: !!active && canDeleteRunHistory(active),
+    deletableFinishedRuns,
   };
 }
 export type BatchController = ReturnType<typeof useBatchController>;

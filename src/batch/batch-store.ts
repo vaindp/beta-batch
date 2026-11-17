@@ -1,4 +1,4 @@
-import type { BatchRun } from './batch-core';
+import { canDeleteRunHistory, type BatchRun } from './batch-core';
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -28,6 +28,31 @@ export async function loadRuns(): Promise<BatchRun[]> {
       const req = db.transaction('jobs').objectStore('jobs').getAll();
       req.onsuccess = () => resolve((req.result as BatchRun[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       req.onerror = () => reject(req.error);
+    });
+  } finally { db.close(); }
+}
+
+/** Recheck persisted state and delete atomically, including when another tab updated a job. */
+export async function deleteRunHistory(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await open();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('jobs', 'readwrite');
+      const jobs = tx.objectStore('jobs');
+      let failure = 'Không xóa được lịch sử job. Dữ liệu vẫn được giữ lại; hãy thử lại.';
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(new Error(failure));
+      for (const id of new Set(ids)) {
+        const request = jobs.get(id);
+        request.onsuccess = () => {
+          const run = request.result as BatchRun | undefined;
+          if (run && !canDeleteRunHistory(run)) {
+            failure = 'Có job đang chạy hoặc chưa xác định trạng thái. Cập nhật hoặc hủy job trước khi xóa lịch sử.';
+            tx.abort();
+          } else jobs.delete(id);
+        };
+      }
     });
   } finally { db.close(); }
 }

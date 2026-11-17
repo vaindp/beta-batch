@@ -6,6 +6,7 @@ import {
 } from './batch-core';
 import type { BatchController } from './useBatchController';
 import { BatchModelSettings } from './BatchModelSettings';
+import { BatchHistoryActions } from './BatchHistoryActions';
 
 interface Props {
   controller: BatchController;
@@ -119,6 +120,7 @@ export function BatchPanel(props: Props) {
                 {runs.map(run => <option key={run.id} value={run.id}>{new Date(run.createdAt).toLocaleString('vi-VN')} · {run.title || 'Truyện'} · {run.rows.length} chương · {batchRunModel(run)}</option>)}
               </select>
             </label>
+            <BatchHistoryActions controller={props.controller} />
             <label className="btn btn-secondary batch-file">Khôi phục bản sao job
               <input type="file" accept=".json" disabled={anyBusy} onChange={e => {
                 const file = e.target.files?.[0]; e.target.value = '';

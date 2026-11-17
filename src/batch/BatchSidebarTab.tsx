@@ -23,6 +23,7 @@ import {
 } from './batch-core';
 import type { BatchController } from './useBatchController';
 import { BatchModelSettings } from './BatchModelSettings';
+import { BatchHistoryActions } from './BatchHistoryActions';
 
 interface Props {
   controller: BatchController;
@@ -265,6 +266,7 @@ export function BatchSidebarTab(props: Props) {
           </select>
         </div>
 
+        <BatchHistoryActions controller={props.controller} />
         {active && (
           <div className="batch-active-card">
             <p className="batch-muted">Model của job: <strong>{batchRunModel(active)}</strong></p>
