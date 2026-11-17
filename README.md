@@ -1,32 +1,29 @@
 # Beta Batch — bản web biên tập truyện
 
-Bản web riêng, kế thừa giao diện và bộ quy tắc biên tập của Beta. Mỗi chương là một yêu cầu độc lập trong cùng Batch job. Trong **Batch API → Model cho job mới**, chọn Gemini 4 Argon (mặc định), Gemini 2.5 Pro, Gemini 2.5 Flash hoặc **Model ID tùy chỉnh…** để nhập ID Gemini khác. Model cần hỗ trợ Vertex AI Batch tại `global` và project phải có quyền sử dụng. Không cần văn bản mẫu; không gộp nhiều chương vào một câu trả lời.
+Bản web riêng, kế thừa giao diện và bộ quy tắc biên tập của Beta. Mỗi chương là một yêu cầu độc lập trong cùng Batch job. Trong **Batch API → Model cho job mới**, chọn model từ cùng danh sách với biên tập thường. Không cần nhập Model ID thủ công; danh sách dùng chung nằm trong `src/ai/models.ts`. Model cần hỗ trợ Vertex AI Batch tại `global` và project phải có quyền sử dụng. Không cần văn bản mẫu; không gộp nhiều chương vào một câu trả lời.
 
-Lựa chọn model Batch được nhớ trong trình duyệt, độc lập với model biên tập trực tiếp trong Cài đặt. Mỗi job lưu model riêng trong lịch sử và bản sao; đổi lựa chọn không thay đổi job đã gửi. Job cũ chưa có trường model vẫn được nhận diện là `gemini-4-argon`. Với Argon, thinking mặc định **MEDIUM**, có LOW và HIGH để chọn. Các model khác dùng thinking và giới hạn đầu ra mặc định của model, không gửi cấu hình riêng của Argon.
+Hai giao diện Batch dùng chung cấu hình bucket/model/thinking, chương đã chọn, job hiện tại, kết quả, thông báo, khóa thao tác, bộ đếm và một luồng kiểm tra trạng thái. Lựa chọn model Batch được nhớ trong trình duyệt, độc lập với model biên tập trực tiếp trong Cài đặt. Mỗi job lưu model riêng trong lịch sử và bản sao; đổi lựa chọn không thay đổi job đã gửi. Job cũ chưa có trường model vẫn được nhận diện là `gemini-4-argon`. Với Argon, thinking mặc định **MEDIUM**, có LOW và HIGH để chọn. Các model khác dùng thinking và giới hạn đầu ra mặc định của model, không gửi cấu hình riêng của Argon.
 
 Đây là website tĩnh, dùng được trên **GitHub Pages** và các dịch vụ static hosting. Không cần máy chủ Node khi sử dụng, không có bản cài đặt desktop. Trình duyệt gọi trực tiếp Google OAuth, Vertex AI và Cloud Storage.
 
-## Chạy và đưa lên GitHub
+## Chạy và cập nhật Vercel
 
-Cần Node.js 22:
+Dự án dùng Node.js 22 và `bun.lock`. Cài thư viện bằng `bun install --frozen-lockfile`, sau đó chạy:
 
 ```sh
-npm ci
 npm test
+npm run lint
 npm run build
 npm run dev
 ```
 
-Mở địa chỉ localhost Vite hiển thị. `npm run build` tạo thư mục `dist`; `npm run preview` xem thử bản build.
+Nếu dùng npm để cài thư viện, repo hiện có xung đột peer dependency giữa Vite và esbuild; dùng `npm install --legacy-peer-deps`.
 
-Để dùng GitHub Pages:
+Website dùng `index.html` → `src/main.tsx` → `src/App.tsx`. Các tệp cần sửa nằm trong `src/`; không dùng các bản tham khảo trong `public/assets/aistudio/` hoặc `index.tsx` ở thư mục gốc.
 
-1. Đưa **nội dung bên trong thư mục `beta batch`** vào thư mục gốc một repository riêng. Giữ cả `.github/workflows/pages.yml`, `package.json` và `package-lock.json`.
-2. Trong repository, chọn **Settings → Pages → Source: GitHub Actions**.
-3. Push vào nhánh `main`, hoặc chạy workflow “Deploy web to GitHub Pages” thủ công.
-4. Workflow kiểm tra, build rồi triển khai `dist`. Đường dẫn tài nguyên dùng `./`, hỗ trợ địa chỉ dạng `https://ten.github.io/ten-repo/`.
+Để cập nhật bản Vercel hiện có, ghi đè các tệp trong gói cập nhật vào đúng đường dẫn tại thư mục gốc repo, bao gồm tệp mới và `bun.lock`, rồi commit lên nhánh đang được Vercel theo dõi. Build command: `npm run build`; output directory: `dist`. Đợi deployment thành công rồi tải lại trang.
 
-Không đưa `node_modules`, file khóa JSON, dữ liệu truyện, bản sao job hay file kết quả lên repository. `.gitignore` đã loại các tên khóa thông dụng; khóa tên tùy ý vẫn phải tự giữ ngoài repository. Không đặt khóa vào biến `VITE_*` vì chúng sẽ xuất hiện trong JavaScript công khai. GitHub Actions không cần khóa Google Cloud.
+Không đưa `node_modules`, `.env`, khóa Service Account JSON, dữ liệu truyện hoặc bản sao job lên repository.
 
 ## Thiết lập Google Cloud một lần
 
@@ -47,7 +44,7 @@ Quyền `storage.buckets.list` không bắt buộc khi đã biết tên bucket. 
 
 1. Tải `.txt` có tiêu đề `Chương 1…`, `Chương 2…` vào màn hình chính. Điền quy tắc đại từ/xưng hô như bản Beta.
 2. Mở **Cài đặt**, chọn kết nối bằng file JSON và nạp khóa từ máy. Khóa được giữ trong `sessionStorage` của tab, không nằm trong bản build hay bản sao job. Mở phiên mới cần nạp lại. Chỉ nạp khóa vào bản web bạn tin cậy và kiểm soát.
-3. Mở **Batch API**, nhập bucket, chọn model và các chương cần biên tập. Nếu chọn **Model ID tùy chỉnh…**, chỉ nhập ID (ví dụ `gemini-4-argon`), không nhập URL hoặc đường dẫn tài nguyên. Chương đã hoàn tất chỉ gửi lại nếu bạn tự chọn; mỗi lượt gửi lại vẫn có phí.
+3. Mở **Batch API**, nhập bucket, chọn model và các chương cần biên tập. Chương đã hoàn tất chỉ gửi lại nếu bạn tự chọn; mỗi lượt gửi lại vẫn có phí.
 4. Bấm **Gửi Batch**. Web lưu bản chụp chương/quy tắc vào IndexedDB, upload JSONL rồi tạo job ở vùng `global`. File đầu vào nằm dưới `beta-batch/<mã-job>/input.jsonl`, kết quả dưới `beta-batch/<mã-job>/output/`.
 5. Tải **Sao lưu job** để giữ bản đối chiếu chương. Bản sao chứa nội dung truyện và prompt, không chứa khóa. Giữ riêng tư.
 6. Có thể đóng web. Google vẫn xử lý. Mở lại cùng địa chỉ web và trình duyệt, nạp khóa nếu cần, chọn job; trạng thái job đang chọn cập nhật mỗi 30 giây.
@@ -75,3 +72,10 @@ Không trộn nút biên tập trực tiếp từng chương với Batch nếu k
 Job thật còn phụ thuộc quyền IAM, bucket và quyền model của project. Batch không đảm bảo phản hồi ngay. Theo [tài liệu Batch của Google](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/batch-inference), Batch có mức giá thấp hơn xử lý trực tiếp và Argon nằm trong danh sách hỗ trợ; nên kiểm tra bảng giá tại thời điểm dùng. Không coi cache là điều kiện để Batch hoạt động.
 
 Tham khảo giao thức: [Batch từ Cloud Storage](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/batch-inference/new-job-from-cloud-storage), [hướng dẫn Argon và thinking](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-argon).
+
+## Bản sửa Batch ngày 18/11/2026
+
+- Website chạy `src/main.tsx` → `src/App.tsx`; cập nhật đúng các tệp trong `src/`.
+- Không gửi `generationConfig: {}`. Với model dùng cấu hình mặc định, bỏ hẳn trường này khỏi JSONL. Xuất JSONL từ bản sao cũ cũng loại cấu trúc rỗng.
+- Các job đã bị Google từ chối nhập dữ liệu không tự chạy lại sau khi cập nhật web. Chọn lại chương và gửi một job mới bằng bản đã sửa; không gửi lại job đang chờ/đang chạy.
+- Chạy `npm test`, `npm run lint`, `npm run build`. Kiểm thử dùng API giả lập, không tạo job tính phí.
