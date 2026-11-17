@@ -1,6 +1,8 @@
 import './index.css';
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { BatchPanel } from './batch/BatchPanel';
+import { useBatchController } from './batch/useBatchController';
+import './batch/batch.css';
 import { BatchSidebarTab } from './batch/BatchSidebarTab';
 import { batchRunModel, importDisposition, type BatchRun } from './batch/batch-core';
 import {
@@ -1709,6 +1711,12 @@ function formatDateTime(dateStr?: string): string {
     }
   };
 
+  const batchController = useBatchController({
+    chapters: project.chapters, rules: project, title: project.title || fileName,
+    credentials: vertexServiceAccountJson,
+    promptFor: text => getPromptForChapter(text, project),
+  });
+
   const filteredChapters = project.chapters.filter(chapter => {
     const matchesSearch = chapter.title.toLocaleLowerCase('vi').includes(chapterSearch.trim().toLocaleLowerCase('vi'));
     if (!matchesSearch) return false;
@@ -1720,6 +1728,7 @@ function formatDateTime(dateStr?: string): string {
   return (
     <>
       <BatchPanel
+        controller={batchController}
         open={isBatchOpen}
         onClose={() => setIsBatchOpen(false)}
         onSettings={() => setIsSettingsModalOpen(true)}
@@ -2539,6 +2548,7 @@ function formatDateTime(dateStr?: string): string {
 
                 {activeSidebarTab === 'batch' && (
                   <BatchSidebarTab
+                    controller={batchController}
                     chapters={project.chapters}
                     rules={project}
                     title={project.title || fileName}
