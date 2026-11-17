@@ -1,5 +1,17 @@
 # Beta Batch — bản web biên tập truyện
 
+## Bối cảnh tác phẩm
+
+Trong tab **Quy tắc → Bối cảnh tác phẩm**, chọn **Hiện đại**, **Cổ đại** hoặc **Tương lai (viễn tưởng)**. Bối cảnh được lưu cùng truyện trong trình duyệt và áp dụng cho cả biên tập thường lẫn Batch. Khi chưa chọn, ứng dụng giữ cách xử lý theo nguyên tác như trước.
+
+Bối cảnh hướng dẫn chọn từ và sửa câu phù hợp thời đại, không cho phép đổi ý gốc, tên riêng, chức danh hoặc tự thêm tình tiết. Quy tắc đại từ và bảng xưng hô cụ thể vẫn được ưu tiên. Đổi bối cảnh sẽ dùng tiền tố prompt/cache mới. Batch lưu bối cảnh tại lúc gửi; nếu bạn đổi bối cảnh trong khi chờ, kết quả cũ được đánh dấu xung đột để tránh nhập vào truyện theo quy tắc khác. Job và dự án cũ chưa có bối cảnh vẫn đọc được.
+
+## Xóa lịch sử Batch
+
+Cả thanh bên và cửa sổ mở rộng đều có **Xóa lịch sử job đang chọn** và **Xóa các job đã kết thúc**, kèm bước xác nhận hoặc **Giữ lại**. Xóa chỉ loại bản ghi job/kết quả khỏi bộ nhớ trình duyệt, không xóa chương đã nhập, không hủy job và không xóa file trên Google Cloud. Tải **Sao lưu job** trước nếu cần khôi phục sau này.
+
+Chỉ xóa được job đã kết thúc (thành công, lỗi, hủy, hết hạn, hoàn tất một phần), hoặc bản chuẩn bị chưa gửi. Job đang chờ/chạy/đang gửi hay chưa xác định trạng thái cần cập nhật, tìm lại hoặc hủy và chờ kết thúc trước. Xóa nhiều bản ghi là một giao dịch: nếu có job vừa chuyển sang đang chạy ở tab khác, toàn bộ lần xóa được giữ lại. Hai giao diện cập nhật cùng nhau, tự chọn job còn lại hoặc hiển thị lịch sử trống.
+
 Bản web riêng, kế thừa giao diện và bộ quy tắc biên tập của Beta. Mỗi chương là một yêu cầu độc lập trong cùng Batch job. Trong **Batch API → Model cho job mới**, chọn model từ cùng danh sách với biên tập thường. Không cần nhập Model ID thủ công; danh sách dùng chung nằm trong `src/ai/models.ts`. Model cần hỗ trợ Vertex AI Batch tại `global` và project phải có quyền sử dụng. Không cần văn bản mẫu; không gộp nhiều chương vào một câu trả lời.
 
 Hai giao diện Batch dùng chung cấu hình bucket/model/thinking, chương đã chọn, job hiện tại, kết quả, thông báo, khóa thao tác, bộ đếm và một luồng kiểm tra trạng thái. Lựa chọn model Batch được nhớ trong trình duyệt, độc lập với model biên tập trực tiếp trong Cài đặt. Mỗi job lưu model riêng trong lịch sử và bản sao; đổi lựa chọn không thay đổi job đã gửi. Job cũ chưa có trường model vẫn được nhận diện là `gemini-4-argon`. Với Argon, thinking mặc định **MEDIUM**, có LOW và HIGH để chọn. Các model khác dùng thinking và giới hạn đầu ra mặc định của model, không gửi cấu hình riêng của Argon.
