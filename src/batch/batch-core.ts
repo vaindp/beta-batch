@@ -1,4 +1,18 @@
 export const BATCH_MODEL = 'gemini-4-argon';
+export const BATCH_MODELS = [
+  { id: BATCH_MODEL, label: 'Gemini 4 Argon' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+];
+export function normalizeBatchModel(value: unknown): string {
+  if (typeof value !== 'string' || !/^gemini-[a-z0-9][a-z0-9._-]*$/.test(value.trim())) {
+    throw new Error('Model ID không hợp lệ. Nhập ID Gemini, ví dụ gemini-4-argon, không nhập URL hoặc đường dẫn.');
+  }
+  return value.trim();
+}
+// Jobs created before model selection always used Argon.
+export const batchRunModel = (run: { model?: string }): string =>
+  normalizeBatchModel(run.model === undefined ? BATCH_MODEL : run.model);
 export type ThinkingLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 export interface BatchChapter {
   id: string;
@@ -14,7 +28,7 @@ export interface BatchRow {
   promptHash: string;
   request: {
     contents: { role: string; parts: { text: string }[] }[];
-    generationConfig: { thinkingConfig: { thinkingLevel: ThinkingLevel }; maxOutputTokens: number };
+    generationConfig: { thinkingConfig?: { thinkingLevel: ThinkingLevel }; maxOutputTokens?: number };
   };
 }
 export interface BatchResult {
@@ -38,6 +52,7 @@ export interface RemoteJob {
 }
 export interface BatchRun {
   version: 1;
+  model?: string;
   id: string;
   createdAt: string;
   projectId: string;
@@ -85,10 +100,12 @@ export async function prepareRun(args: {
   projectId: string;
   bucket: string;
   thinking: ThinkingLevel;
+  model?: string;
   promptFor: (text: string) => string;
 }): Promise<BatchRun> {
   if (!args.chapters.length) throw new Error('Chọn ít nhất một chương.');
   if (args.chapters.length > 200_000) throw new Error('Một job tối đa 200.000 chương.');
+  const model = batchRunModel(args);
   const id = `beta-${crypto.randomUUID()}`;
   const rows = await Promise.all(args.chapters.map(async chapter => {
     // Unique trailing marker disambiguates identical chapters without changing the shared prefix.
@@ -98,12 +115,15 @@ export async function prepareRun(args: {
       promptHash: await sha256(prompt),
       request: {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { thinkingConfig: { thinkingLevel: args.thinking }, maxOutputTokens: 65_536 },
+        // Use model defaults when Argon's thinking configuration is not applicable.
+        generationConfig: model === BATCH_MODEL
+          ? { thinkingConfig: { thinkingLevel: args.thinking }, maxOutputTokens: 65_536 }
+          : {},
       },
     };
   }));
   const run: BatchRun = {
-    version: 1, id, createdAt: new Date().toISOString(), title: args.title,
+    version: 1, model, id, createdAt: new Date().toISOString(), title: args.title,
     projectId: args.projectId, bucket: normalizeBucket(args.bucket),
     rules: { ...args.rules }, rows, phase: 'prepared',
   };
@@ -120,7 +140,7 @@ export function outputPrefix(run: BatchRun): string { return `beta-batch/${run.i
 export function createJobBody(run: BatchRun) {
   return {
     displayName: run.id,
-    model: `publishers/google/models/${BATCH_MODEL}`,
+    model: `publishers/google/models/${batchRunModel(run)}`,
     inputConfig: { instancesFormat: 'jsonl', gcsSource: { uris: [`gs://${run.bucket}/${inputObject(run)}`] } },
     outputConfig: { predictionsFormat: 'jsonl', gcsDestination: { outputUriPrefix: `gs://${run.bucket}/${outputPrefix(run)}` } },
   };
@@ -197,7 +217,7 @@ export async function validateBackup(value: unknown): Promise<BatchRun> {
     ids.add(c.id);
   }
   if (run.job) validateJobName(run.job.name);
-  return { ...run, results: undefined, outputWarnings: undefined };
+  return { ...run, model: batchRunModel(run), results: undefined, outputWarnings: undefined };
 }
 
 export function validateJobName(name: string): string {

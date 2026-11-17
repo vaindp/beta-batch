@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Layers, Download, RefreshCw, Clock } from 'lucide-react';
 import {
-  BATCH_MODEL, formatDuration, importDisposition, parseOutputs, prepareRun, terminalState, toJSONL, validateBackup,
+  BATCH_MODEL, batchRunModel, formatDuration, importDisposition, parseOutputs, prepareRun, terminalState, toJSONL, validateBackup,
   type BatchChapter, type BatchRules, type BatchRun, type ThinkingLevel,
 } from './batch-core';
 import { VertexBatchClient, GoogleBatchError, authFromJSON } from './vertex-batch';
 import { loadRuns, saveRun } from './batch-store';
+import { BatchModelSettings, useBatchModel } from './BatchModelSettings';
 import './batch.css';
 
 interface Props {
@@ -33,6 +34,7 @@ function download(name: string, contents: string, type = 'application/json') {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 export function BatchPanel(props: Props) {
+  const modelSelection = useBatchModel();
   const [runs, setRuns] = useState<BatchRun[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [activeId, setActiveId] = useState('');
@@ -164,7 +166,7 @@ export function BatchPanel(props: Props) {
     const api = client();
     const run = await prepareRun({
       chapters: selectedChapters, rules: props.rules, title: props.title,
-      projectId: await api.projectId(), bucket, thinking, promptFor: props.promptFor,
+      projectId: await api.projectId(), bucket, model: modelSelection.model, thinking, promptFor: props.promptFor,
     });
     localStorage.setItem('beta-batch-bucket', run.bucket);
     await persist(run);
@@ -203,7 +205,7 @@ export function BatchPanel(props: Props) {
     <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="batch-title"
       className="modal-content batch-dialog" onClick={e => e.stopPropagation()}>
       <div className="modal-header">
-        <div><h2 id="batch-title"><Layers size={21} /> Biên tập bằng Batch API</h2><p className="batch-subtitle">Gemini 4 Argon · Mỗi chương là một yêu cầu độc lập</p></div>
+        <div><h2 id="batch-title"><Layers size={21} /> Biên tập bằng Batch API</h2><p className="batch-subtitle">Chọn model cho từng job · Mỗi chương là một yêu cầu độc lập</p></div>
         <button className="btn-icon" aria-label="Đóng Batch" onClick={props.onClose}><X size={20} /></button>
       </div>
       <div className="batch-body">
@@ -211,7 +213,7 @@ export function BatchPanel(props: Props) {
         <details className="batch-note">
           <summary>Chưa có bucket? Thiết lập một lần trong Google Cloud Console</summary>
           <ol>
-            <li>Mở <a href="https://console.cloud.google.com/storage/browser" target="_blank" rel="noopener noreferrer">Cloud Storage → Buckets</a>, chọn đúng project đang dùng Argon.</li>
+            <li>Mở <a href="https://console.cloud.google.com/storage/browser" target="_blank" rel="noopener noreferrer">Cloud Storage → Buckets</a>, chọn đúng project chạy Batch.</li>
             <li>Bấm Create, đặt tên bucket duy nhất; dùng Standard, chọn vùng phù hợp. Giữ bucket riêng tư với Uniform access và Public access prevention. Phần lưu trữ có thể phát sinh phí.</li>
             <li>Trong Permissions của bucket, cấp <strong>Storage Object User</strong> cho email service account trong file JSON. Tài khoản này cũng cần <strong>Vertex AI User</strong> trên project.</li>
             <li>Nếu bucket thuộc project khác, cấp quyền đọc/ghi đối tượng cho <strong>Vertex AI Service Agent</strong> của project chạy job: service-PROJECT_NUMBER@gcp-sa-aiplatform.iam.gserviceaccount.com.</li>
@@ -225,12 +227,13 @@ export function BatchPanel(props: Props) {
             <label className="batch-field">Bucket Cloud Storage có sẵn
               <input value={bucket} placeholder="ten-bucket hoặc gs://ten-bucket" onChange={e => setBucket(e.target.value)} disabled={anyBusy} />
             </label>
-            <label className="batch-field">Mức thinking
+            <BatchModelSettings selection={modelSelection} disabled={anyBusy} />
+            {modelSelection.model === BATCH_MODEL && <label className="batch-field">Mức thinking
               <select value={thinking} onChange={e => setThinking(e.target.value as ThinkingLevel)} disabled={anyBusy}>
                 <option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option>
               </select>
-            </label>
-            <p className="batch-muted">Giữ toàn bộ prompt và quy tắc đang có trong trình biên tập. Không cần văn bản mẫu. Model cố định: {BATCH_MODEL}.</p>
+            </label>}
+            <p className="batch-muted">Giữ toàn bộ prompt và quy tắc đang có trong trình biên tập. Không cần văn bản mẫu.</p>
             <div className="batch-actions">
               <button className="btn btn-secondary" disabled={anyBusy} onClick={() => setSelected(available.filter(c => c.status !== 'done').map(c => c.id))}>Chọn chương chưa xong</button>
               <button className="btn btn-secondary" disabled={anyBusy} onClick={() => setSelected([])}>Bỏ chọn</button>
@@ -244,7 +247,7 @@ export function BatchPanel(props: Props) {
                 <span>{chapter.title}<small>{lockedIds.has(chapter.id) ? 'Đang thuộc một job chưa hoàn tất' : chapter.status === 'done' ? 'Đã xong · chọn lại sẽ tạo yêu cầu mới có phí' : 'Chưa biên tập'}</small></span>
               </label>)}
             </div>
-            <button className="btn btn-primary batch-submit" disabled={anyBusy || !props.credentials || !bucket.trim() || !selectedChapters.length}
+            <button className="btn btn-primary batch-submit" disabled={anyBusy || !props.credentials || !bucket.trim() || !modelSelection.model || !selectedChapters.length}
               onClick={() => void perform('Đang lưu và gửi job lên Google…', submit)}>
               Gửi Batch · {selectedChapters.length} chương (có phí)
             </button>
@@ -254,7 +257,7 @@ export function BatchPanel(props: Props) {
             <label className="batch-field">Lịch sử job
               <select value={activeId} onChange={e => setActiveId(e.target.value)} disabled={anyBusy}>
                 {!runs.length && <option value="">Chưa có job</option>}
-                {runs.map(run => <option key={run.id} value={run.id}>{new Date(run.createdAt).toLocaleString('vi-VN')} · {run.title || 'Truyện'} · {run.rows.length} chương</option>)}
+                {runs.map(run => <option key={run.id} value={run.id}>{new Date(run.createdAt).toLocaleString('vi-VN')} · {run.title || 'Truyện'} · {run.rows.length} chương · {batchRunModel(run)}</option>)}
               </select>
             </label>
             <label className="btn btn-secondary batch-file">Khôi phục bản sao job
@@ -272,6 +275,7 @@ export function BatchPanel(props: Props) {
               <div className="batch-status">{active.job ? stateNames[active.job.state] || active.job.state
                 : ['unknown', 'submitting'].includes(active.phase) ? 'Cần tìm lại job đã gửi' : 'Chưa gửi thành công'}</div>
               <p className="batch-muted batch-id">{active.job?.name || active.id}</p>
+              <p className="batch-muted">Model của job: <strong>{batchRunModel(active)}</strong></p>
               {active.job?.error?.message && <p className="batch-error">{active.job.error.message}</p>}
               <div className="batch-timer-box" style={{ margin: '10px 0' }}>
                 <div className="batch-timer-header">

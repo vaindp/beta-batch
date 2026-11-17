@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import {
   BATCH_MODEL,
+  batchRunModel,
   formatDuration,
   importDisposition,
   parseOutputs,
@@ -27,6 +28,7 @@ import {
 } from './batch-core';
 import { VertexBatchClient, GoogleBatchError, authFromJSON } from './vertex-batch';
 import { loadRuns, saveRun } from './batch-store';
+import { BatchModelSettings, useBatchModel } from './BatchModelSettings';
 
 interface Props {
   chapters: BatchChapter[];
@@ -71,6 +73,7 @@ function downloadFile(name: string, contents: string, type = 'application/json')
 }
 
 export function BatchSidebarTab(props: Props) {
+  const modelSelection = useBatchModel();
   const [runs, setRuns] = useState<BatchRun[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [activeId, setActiveId] = useState('');
@@ -243,6 +246,7 @@ export function BatchSidebarTab(props: Props) {
       title: props.title,
       projectId: await api.projectId(),
       bucket,
+      model: modelSelection.model,
       thinking,
       promptFor: props.promptFor,
     });
@@ -316,7 +320,7 @@ export function BatchSidebarTab(props: Props) {
         <div className="batch-sidebar-title-row">
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Layers size={16} color="var(--primary-color)" />
-            <span style={{ fontWeight: 700, fontSize: '0.8438rem' }}>Batch API ({BATCH_MODEL})</span>
+            <span style={{ fontWeight: 700, fontSize: '0.8438rem' }}>Batch API</span>
           </div>
           <button
             className="btn-action-ghost"
@@ -362,7 +366,8 @@ export function BatchSidebarTab(props: Props) {
           />
         </div>
 
-        <div className="input-group">
+        <BatchModelSettings selection={modelSelection} disabled={anyBusy} />
+        {modelSelection.model === BATCH_MODEL && <div className="input-group">
           <label htmlFor="sidebar-thinking">Mức Thinking</label>
           <select
             id="sidebar-thinking"
@@ -375,7 +380,7 @@ export function BatchSidebarTab(props: Props) {
             <option value="MEDIUM">Medium (Cân bằng, khuyến nghị)</option>
             <option value="HIGH">High (Sâu)</option>
           </select>
-        </div>
+        </div>}
 
         <div style={{ marginTop: '6px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -450,7 +455,7 @@ export function BatchSidebarTab(props: Props) {
         <button
           className="btn btn-primary"
           style={{ width: '100%', justifyContent: 'center', marginTop: '10px' }}
-          disabled={anyBusy || !props.credentials || !bucket.trim() || !selectedChapters.length}
+          disabled={anyBusy || !props.credentials || !bucket.trim() || !modelSelection.model || !selectedChapters.length}
           onClick={() => void perform('Đang lưu và gửi job lên Google…', submit)}
         >
           <Play size={14} />
@@ -492,7 +497,7 @@ export function BatchSidebarTab(props: Props) {
                   hour: '2-digit',
                   minute: '2-digit',
                 })}{' '}
-                · {run.rows.length} chương {run.job ? `· ${run.job.state.replace('JOB_STATE_', '')}` : ''}
+                · {run.rows.length} chương · {batchRunModel(run)} {run.job ? `· ${run.job.state.replace('JOB_STATE_', '')}` : ''}
               </option>
             ))}
           </select>
@@ -500,6 +505,7 @@ export function BatchSidebarTab(props: Props) {
 
         {active && (
           <div className="batch-active-card">
+            <p className="batch-muted">Model của job: <strong>{batchRunModel(active)}</strong></p>
             {/* Status & Name */}
             <div className="batch-status-row">
               <span
