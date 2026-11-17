@@ -5,6 +5,7 @@ import {
   validateBackup, terminalState, batchRunModel, BATCH_MODELS, formatDuration, type BatchRun, type BatchChapter,
 } from '../src/batch/batch-core';
 import { VertexBatchClient, GoogleBatchError } from '../src/batch/vertex-batch';
+import { modelMapping } from '../src/ai/ai-browser';
 
 const rules = { pronounRules: 'Giữ tên nhân vật', addressingRules: 'Giữ xưng hô' };
 const chapter = (id: string): BatchChapter => ({
@@ -44,26 +45,56 @@ test('one JSONL request per chapter, same rules prefix, unique correspondence ev
   assert.equal(body.inputConfig.gcsSource.uris[0], `gs://test-bucket/beta-batch/${run.id}/input.jsonl`);
   assert.ok(!toJSONL(run).includes('private_key'));
 });
-test('selected and custom models survive backup restoration and reach the Google job request', async () => {
-  for (const model of [...BATCH_MODELS.map(item => item.id), 'gemini-3.1-pro-preview']) {
+test('every model in direct editing uploads valid JSONL and reaches the Batch job request', async () => {
+  assert.deepEqual(BATCH_MODELS, Object.entries(modelMapping).map(([label, id]) => ({ label, id })));
+  for (const model of BATCH_MODELS.map(item => item.id)) {
     const run = await fixture(` ${model} `);
     assert.equal(run.model, model);
     const restored = await validateBackup(JSON.parse(JSON.stringify(run)));
     assert.equal(batchRunModel(restored), model);
     let submitted: any;
+    let uploaded = '';
     const client = new VertexBatchClient(async () => ({ projectId: 'test-project', token: 'test-token' }),
-      async (_url, init) => {
+      async (url, init) => {
+        if (String(url).includes('upload/storage')) {
+          uploaded = init!.body as string;
+          for (const line of uploaded.trim().split('\n')) {
+            const checkStructs = (value: any) => {
+              if (value && typeof value === 'object') {
+                assert.ok(Array.isArray(value) || Object.keys(value).length > 0, 'Google rejects empty structs');
+                Object.values(value).forEach(checkStructs);
+              }
+            };
+            checkStructs(JSON.parse(line));
+          }
+          return Response.json({});
+        }
         submitted = JSON.parse(init!.body as string);
         return Response.json({ name: 'projects/test-project/locations/global/batchPredictionJobs/123', state: 'JOB_STATE_PENDING' });
       });
+    await client.upload(restored);
     await client.create(restored);
     assert.equal(submitted.model, `publishers/google/models/${model}`);
-    const config = JSON.parse(toJSONL(restored).trim().split('\n')[0]).request.generationConfig;
+    const config = JSON.parse(uploaded.trim().split('\n')[0]).request.generationConfig;
     if (model !== 'gemini-4-argon') {
-      assert.equal(config.thinkingConfig, undefined);
-      assert.equal(config.maxOutputTokens, undefined);
+      assert.equal(config, undefined);
     }
   }
+});
+test('JSONL export removes empty structs in old backups without changing prompts or saved data', async () => {
+  const run = await fixture('gemini-2.5-flash');
+  run.rows[0].request.generationConfig = {};
+  run.rows[1].request.generationConfig = { thinkingConfig: {} as any };
+  const saved = JSON.stringify(run);
+  const exported = toJSONL(run).trim().split('\n').map(line => JSON.parse(line).request);
+  assert.ok(exported.every(request => !('generationConfig' in request)));
+  assert.deepEqual(exported.map(request => request.contents), run.rows.map(row => row.request.contents));
+  assert.equal(JSON.stringify(run), saved);
+});
+test('new jobs reject unlisted models while historical custom model backups remain readable', async () => {
+  await assert.rejects(fixture('gemini-unlisted-model'), /danh sách/);
+  const old = { ...await fixture(), model: 'gemini-unlisted-model' };
+  assert.equal((await validateBackup(old)).model, 'gemini-unlisted-model');
 });
 test('legacy jobs keep Argon while new jobs can select a different model', async () => {
   const legacy = await fixture();
