@@ -1,3 +1,5 @@
+import { getPromptForChapter } from './ai/editing-prompt';
+import { STORY_CONTEXTS, normalizeStoryContext, type EditingRules } from './ai/story-context';
 import './index.css';
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { BatchPanel } from './batch/BatchPanel';
@@ -66,10 +68,8 @@ export interface Chapter {
   batchResultId?: string;
 }
 
-export interface Project {
+export interface Project extends EditingRules {
   title: string;
-  pronounRules: string;
-  addressingRules: string;
   chapters: Chapter[];
 }
 
@@ -281,48 +281,6 @@ const replaceChapterText = (
   return { content: container.innerHTML, replacements };
 };
 
-const getPromptForChapter = (chapterContent: string, project: Pick<Project, 'pronounRules' | 'addressingRules'>): string => {
-  return `
-Bạn là một trợ lý biên tập tiểu thuyết chuyên nghiệp.
-Nhiệm vụ của bạn là dựa vào các quy tắc được cung cấp để sửa bản dịch.
-
----
-
-## ⚙️ **BỘ QUY TẮC CHUẨN BIÊN TẬP TRUNG–VIỆT**
-
-### 1️⃣ Trau chuốt & Thuần Việt
-* ✅ **Trau chuốt câu từ cho mượt mà, thuần Việt** nhưng vẫn phải **giữ nguyên đúng ý gốc**.
-* ✅ Chỉ sửa cấu trúc câu cho thật sự thuần Việt, dễ hiểu, trôi chảy, **không sửa nghĩa**.
-* ❌ Tuyệt đối không làm thay đổi ý nghĩa của tác giả.
-* ❌ Không thêm thắt tình tiết hoặc thay đổi tính cách nhân vật thông qua cách dùng từ.
-
-### 2️⃣ Tên riêng & Ngôi xưng (QUY TẮC NGHIÊM NGẶT)
-* ❌ **CẤM TUYỆT ĐỐI:** Không đổi tên riêng thành đại từ (Ví dụ: "Hạ Ngôn" → "cô").
-* ❌ **CẤM TUYỆT ĐỐI:** Không đổi đại từ thành tên riêng (Ví dụ: "cô" → "Hạ Ngôn").
-* ✅ **CHỈ SỬA:** Đại từ sai (so với quy tắc đại từ/xưng hô đã cung cấp) thành đại từ đúng theo quy tắc đã cung cấp.
-* ✅ Giữ nguyên biệt danh, chức danh, tên riêng.
-* ✅ Chỉ sửa lỗi chính tả rõ ràng.
-
-### 3️⃣ BẮT BUỘC DỊCH CÁC TỪ NGOẠI LAI SÓT CONVERT
-Nếu trong câu có bất kỳ từ/đoạn tiếng Trung, Anh... chưa dịch, BẮT BUỘC phải dịch nghĩa ra tiếng Việt thuần thục.
-Ví dụ:
-❌ "nghiêm陣以待" → ✅ "đang nghiêm chỉnh giằng trận".
-
---- QUY TẮC ĐẠI TỪ CỤ THỂ ---
-${project.pronounRules}
---- HẾT QUY TẮC ĐẠI TỪ CỤ THỂ ---
-
---- BẢNG QUY TẮC XƯNG HÔ CỤ THỂ ---
-${project.addressingRules}
---- HẾT BẢNG QUY TẮC XƯNG HÔ CỤ THỂ ---
-
---- VĂN BẢN GỐC CẦN BIÊN TẬP ---
-${chapterContent}
---- HẾT VĂN BẢN GỐC ---
-
-Hãy trả về duy nhất nội dung đã được biên tập thuần túy (plain text).
-`;
-};
 
 const capitalizeSentences = (text: string) => {
   if (!text) return text;
@@ -569,7 +527,7 @@ export default function App() {
   const [isAppLogsModalOpen, setIsAppLogsModalOpen] = useState(false);
   const [isPromptLogsModalOpen, setIsPromptLogsModalOpen] = useState(false);
   const [fileName, setFileName] = useState('');
-  const [project, setProject] = useState<Project>({ title: '', pronounRules: '', addressingRules: '', chapters: [] });
+  const [project, setProject] = useState<Project>({ title: '', pronounRules: '', addressingRules: '', storyContext: '', chapters: [] });
   const [exchangeRate, setExchangeRate] = useState(() => {
     const saved = Number(localStorage.getItem(EXCHANGE_RATE_KEY));
     return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_EXCHANGE_RATE;
@@ -648,6 +606,7 @@ function formatDateTime(dateStr?: string): string {
           title: savedProject.title || '',
           pronounRules: savedProject.pronounRules || '',
           addressingRules: savedProject.addressingRules || '',
+          storyContext: normalizeStoryContext(savedProject.storyContext),
           chapters: Array.isArray(savedProject.chapters)
             ? savedProject.chapters.map(chapter => restoreTranslationStatistics(
                 chapter.status === 'editing' ? { ...chapter, status: 'ready' as const } : chapter,
@@ -731,7 +690,7 @@ function formatDateTime(dateStr?: string): string {
     setIsCheckingArgonCache(false);
     setArgonCacheDiagnostic(null);
     return () => argonCacheCheckRef.current?.abort();
-  }, [project.pronounRules, project.addressingRules, provider, selectedModelName, vertexProjectId, vertexServiceAccountJson]);
+  }, [project.pronounRules, project.addressingRules, project.storyContext, provider, selectedModelName, vertexProjectId, vertexServiceAccountJson]);
 
   useEffect(() => {
     document.body.className = theme === 'light' ? 'light-mode' : 'dark-mode';
@@ -834,7 +793,7 @@ function formatDateTime(dateStr?: string): string {
   };
 
   const handleClearRules = () => {
-    setProject(prev => ({ ...prev, pronounRules: '', addressingRules: '' }));
+    setProject(prev => ({ ...prev, pronounRules: '', addressingRules: '', storyContext: '' }));
     showNotification('Đã xóa trắng quy tắc.', 'success');
   };
 
@@ -1647,7 +1606,7 @@ function formatDateTime(dateStr?: string): string {
 
   const handleDeleteFile = () => {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
-    setProject({ title: '', pronounRules: '', addressingRules: '', chapters: [] });
+    setProject({ title: '', pronounRules: '', addressingRules: '', storyContext: '', chapters: [] });
     setFileName('');
     setActiveChapterId(null);
     setDeletingChapterId(null);
@@ -2218,6 +2177,20 @@ function formatDateTime(dateStr?: string): string {
                           Xóa
                         </button>
                       </div>
+                    </div>
+
+                    <div className="input-group">
+                      <label htmlFor="story-context">Bối cảnh tác phẩm</label>
+                      <select id="story-context" className="styled-input styled-select"
+                        value={project.storyContext || ''}
+                        onChange={event => setProject(previous => ({ ...previous, storyContext: normalizeStoryContext(event.target.value) }))}
+                        aria-describedby="story-context-help">
+                        <option value="">Chưa chọn — giữ theo nguyên tác</option>
+                        {STORY_CONTEXTS.map(context => <option key={context.value} value={context.value}>{context.label}</option>)}
+                      </select>
+                      <p id="story-context-help" className="label-hint" style={{ marginTop: '6px', lineHeight: 1.5 }}>
+                        Định hướng cách dùng từ và sửa câu phù hợp nguyên tác, áp dụng cho cả biên tập thường và Batch.
+                      </p>
                     </div>
 
                     <div className="input-group">
