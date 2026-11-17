@@ -23,15 +23,7 @@ export function restoreAPIKeyConfig(saved: Record<string, unknown>) {
   };
 }
 
-export const modelMapping: Record<string, string> = {
-  'Gemini 4 Argon': 'gemini-4-argon',
-  'Gemini 3.8 Flash': 'gemini-3.8-flash',
-  'Gemini 3.1 Flash Lite': 'gemini-3.1-flash-lite',
-  'Gemini 3.5 Flash': 'gemini-3.5-flash',
-  'Gemini 3.1 Pro Preview': 'gemini-3.1-pro-preview',
-  'Gemini 2.5 Pro': 'gemini-2.5-pro',
-  'Gemini 2.5 Flash': 'gemini-2.5-flash',
-};
+export { modelMapping } from './models';
 
 export const GLOBAL_VERTEX_MODELS = new Set(['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-4-argon']);
 
