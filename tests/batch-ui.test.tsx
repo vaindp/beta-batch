@@ -13,7 +13,7 @@ const chapters = ['1', '2'].map(id => ({ id, title: `Chương ${id}`, originalCo
 const rules = { pronounRules: '', addressingRules: '' };
 const jobName = 'projects/test-project/locations/global/batchPredictionJobs/123';
 
-async function setup(t: any, savedRuns: BatchRun[] = [], fetcher?: typeof fetch) {
+async function setup(t: any, savedRuns: BatchRun[] = [], fetcher?: typeof fetch, deletionFailure = false) {
   const keys = ['window', 'document', 'localStorage', 'navigator', 'IS_REACT_ACT_ENVIRONMENT', 'clearInterval'];
   const originals = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const storage = new Map<string, string>();
@@ -41,6 +41,10 @@ async function setup(t: any, savedRuns: BatchRun[] = [], fetcher?: typeof fetch)
   const services = {
     loadRuns: async () => structuredClone(stored),
     saveRun: async (run: BatchRun) => { stored = [structuredClone(run), ...stored.filter(item => item.id !== run.id)]; },
+    deleteRunHistory: async (ids: string[]) => {
+      if (deletionFailure) throw new Error('Test storage failure');
+      stored = stored.filter(run => !ids.includes(run.id));
+    },
     createClient: () => client,
   };
   const common = { chapters, rules, title: 'Truyện thử', credentials: 'fake-credentials', promptFor: (text: string) => text };
@@ -169,4 +173,64 @@ test('old custom selections migrate only to known models', () => {
   assert.equal(restoreBatchModel('custom', 'gemini-3.8-flash'), 'gemini-3.8-flash');
   assert.equal(restoreBatchModel('custom', 'gemini-misspelled'), 'gemini-4-argon');
   assert.equal(restoreBatchModel('gemini-2.5-flash', null), 'gemini-2.5-flash');
+});
+
+async function historyFixture() {
+  const run = await prepareRun({ chapters, rules, title: 'Job đã kết thúc', projectId: 'test-project', bucket: 'test-bucket', thinking: 'LOW', promptFor: text => text });
+  run.phase = 'submitted';
+  run.job = { name: jobName, state: 'JOB_STATE_FAILED' };
+  return run;
+}
+const textOf = (node: any): string => typeof node === 'string' ? node : (node.children || []).map(textOf).join('');
+const buttonNamed = (view: any, text: string) => view.findAllByType('button').find((button: any) => textOf(button).trim() === text)!;
+
+test('delete history requires confirmation, cancels cleanly, then synchronizes both views and storage', async t => {
+  const done = await historyFixture();
+  const h = await setup(t, [done]);
+  await act(async () => buttonNamed(h.views()[1], 'Xóa lịch sử job đang chọn').props.onClick());
+  assert.equal(h.controller().runs.length, 1);
+  assert.equal(h.stored().length, 1);
+  assert.ok(h.views().every(view => buttonNamed(view, 'Xác nhận xóa lịch sử')));
+  await act(async () => buttonNamed(h.views()[0], 'Giữ lại').props.onClick());
+  assert.equal(h.controller().pendingDeletion.length, 0);
+  assert.equal(h.stored().length, 1);
+  await act(async () => buttonNamed(h.views()[0], 'Xóa lịch sử job đang chọn').props.onClick());
+  await act(async () => buttonNamed(h.views()[1], 'Xác nhận xóa lịch sử').props.onClick());
+  assert.equal(h.stored().length, 0);
+  assert.equal(h.controller().runs.length, 0);
+  assert.equal(h.controller().activeId, '');
+  assert.equal(h.controller().active, undefined);
+  assert.ok(h.views().every(view => buttonNamed(view, 'Xóa lịch sử job đang chọn').props.disabled));
+  assert.equal(h.requests.length, 0, 'history deletion must not call Google APIs');
+  await h.rerender(false, false); await h.rerender(true, true);
+  assert.equal(h.controller().runs.length, 0);
+});
+
+test('bulk cleanup keeps running and ambiguous jobs, and selects a remaining job', async t => {
+  const done = await historyFixture();
+  const running = { ...await historyFixture(), job: { name: jobName, state: 'JOB_STATE_RUNNING' } };
+  const unknown = { ...await historyFixture(), phase: 'unknown' as const, job: undefined };
+  const h = await setup(t, [done, running, unknown]);
+  await act(async () => h.controller().requestHistoryDeletion([running.id]));
+  assert.equal(h.controller().pendingDeletion.length, 0);
+  await act(async () => h.controller().requestHistoryDeletion([unknown.id]));
+  assert.equal(h.controller().pendingDeletion.length, 0);
+  await act(async () => buttonNamed(h.views()[1], 'Xóa các job đã kết thúc (1)').props.onClick());
+  await act(async () => h.controller().confirmHistoryDeletion());
+  assert.deepEqual(h.stored().map(run => run.id), [running.id, unknown.id]);
+  assert.equal(h.controller().activeId, running.id);
+  assert.ok(h.views().every(view => buttonNamed(view, 'Xóa lịch sử job đang chọn').props.disabled));
+  assert.equal(h.controller().lockedIds.size, chapters.length);
+});
+
+test('failed history deletion preserves the job, confirmation and both views', async t => {
+  const done = await historyFixture();
+  const h = await setup(t, [done], undefined, true);
+  await act(async () => h.controller().requestHistoryDeletion([done.id]));
+  await act(async () => h.controller().confirmHistoryDeletion());
+  assert.equal(h.stored().length, 1);
+  assert.equal(h.controller().activeId, done.id);
+  assert.deepEqual(h.controller().pendingDeletion, [done.id]);
+  assert.equal(h.controller().error, 'Test storage failure');
+  assert.ok(h.views().every(view => buttonNamed(view, 'Xác nhận xóa lịch sử')));
 });
