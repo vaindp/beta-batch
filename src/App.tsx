@@ -2,7 +2,7 @@ import './index.css';
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { BatchPanel } from './batch/BatchPanel';
 import { BatchSidebarTab } from './batch/BatchSidebarTab';
-import { BATCH_MODEL, importDisposition, type BatchRun } from './batch/batch-core';
+import { batchRunModel, importDisposition, type BatchRun } from './batch/batch-core';
 import {
   checkAIConnectionInBrowser, generateAIContentInBrowser, getAIConfigurationError, restoreAPIKeyConfig,
   modelMapping, GLOBAL_VERTEX_MODELS, resolveVertexRegion,
@@ -811,7 +811,7 @@ function formatDateTime(dateStr?: string): string {
           cachedTokens: usage?.cachedContentTokenCount,
           translationCostUsd: undefined,
           cacheObservation: {
-            model: BATCH_MODEL,
+            model: batchRunModel(run),
             mode: (usage?.cachedContentTokenCount ? 'implicit' : 'none') as CacheObservation['mode'],
             recordedAt: new Date().toISOString(),
             usageMetadata: usage ?? null,
