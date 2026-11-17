@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   prepareRun, toJSONL, parseOutputs, importDisposition, createJobBody, normalizeBucket,
-  validateBackup, terminalState, batchRunModel, BATCH_MODELS, type BatchRun, type BatchChapter,
-} from '../batch-core';
-import { VertexBatchClient, GoogleBatchError } from '../vertex-batch';
+  validateBackup, terminalState, batchRunModel, BATCH_MODELS, formatDuration, type BatchRun, type BatchChapter,
+} from '../src/batch/batch-core';
+import { VertexBatchClient, GoogleBatchError } from '../src/batch/vertex-batch';
 
 const rules = { pronounRules: 'Giữ tên nhân vật', addressingRules: 'Giữ xưng hô' };
 const chapter = (id: string): BatchChapter => ({
@@ -73,6 +73,16 @@ test('legacy jobs keep Argon while new jobs can select a different model', async
   assert.equal((await validateBackup(JSON.parse(JSON.stringify(legacy)))).model, 'gemini-4-argon');
   assert.equal(createJobBody(legacy).model, 'publishers/google/models/gemini-4-argon');
   assert.equal(createJobBody(next).model, 'publishers/google/models/gemini-2.5-flash');
+});
+test('model selection and backup restoration retain execution timer timestamps', async () => {
+  const run = await fixture('gemini-2.5-pro');
+  run.startedAt = '2026-11-17T08:00:00.000Z';
+  run.completedAt = '2026-11-17T08:02:03.000Z';
+  const restored = await validateBackup(JSON.parse(JSON.stringify(run)));
+  assert.equal(restored.startedAt, run.startedAt);
+  assert.equal(restored.completedAt, run.completedAt);
+  assert.equal(batchRunModel(restored), 'gemini-2.5-pro');
+  assert.equal(formatDuration(Date.parse(restored.completedAt!) - Date.parse(restored.startedAt!)), '2 phút 3 giây');
 });
 test('invalid model IDs cannot be prepared, restored, or submitted', async () => {
   const run = await fixture();
