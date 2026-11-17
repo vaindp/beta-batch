@@ -1,34 +1,20 @@
-import React, { useSyncExternalStore } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BATCH_MODEL, BATCH_MODELS } from './batch-core';
+import { isSelectableModel } from '../ai/models';
 
-const changeEvent = 'beta-batch-model-changed';
-function subscribe(notify: () => void) {
-  window.addEventListener(changeEvent, notify);
-  window.addEventListener('storage', notify);
-  return () => {
-    window.removeEventListener(changeEvent, notify);
-    window.removeEventListener('storage', notify);
-  };
+export function restoreBatchModel(choice: string | null, custom: string | null): string {
+  const model = (choice === 'custom' ? custom : choice)?.trim() || BATCH_MODEL;
+  return isSelectableModel(model) ? model : BATCH_MODEL;
 }
-function save(key: string, value: string) {
-  localStorage.setItem(key, value);
-  window.dispatchEvent(new Event(changeEvent));
-}
-const readChoice = () => localStorage.getItem('beta-batch-model') || BATCH_MODEL;
-const readCustom = () => localStorage.getItem('beta-batch-custom-model') || '';
 
-// Both mounted Batch views and other tabs read the same persisted selection.
 export function useBatchModel() {
-  const savedChoice = useSyncExternalStore(subscribe, readChoice, () => BATCH_MODEL);
-  const customModel = useSyncExternalStore(subscribe, readCustom, () => '');
-  const choice = savedChoice === 'custom' || BATCH_MODELS.some(item => item.id === savedChoice)
-    ? savedChoice : BATCH_MODEL;
+  const [model, setModel] = useState(() => restoreBatchModel(
+    localStorage.getItem('beta-batch-model'), localStorage.getItem('beta-batch-custom-model'),
+  ));
+  useEffect(() => { localStorage.setItem('beta-batch-model', model); }, [model]);
   return {
-    choice,
-    customModel,
-    model: choice === 'custom' ? customModel.trim() : choice,
-    setChoice: (value: string) => save('beta-batch-model', value),
-    setCustomModel: (value: string) => save('beta-batch-custom-model', value),
+    model,
+    setChoice: (value: string) => { if (isSelectableModel(value)) setModel(value); },
   };
 }
 
@@ -38,17 +24,12 @@ export function BatchModelSettings({ selection, disabled }: {
 }) {
   return <>
     <label className="batch-field">Model cho job mới
-      <select className="styled-input styled-select" value={selection.choice}
+      <select className="styled-input styled-select" value={selection.model}
         onChange={event => selection.setChoice(event.target.value)} disabled={disabled}>
         {BATCH_MODELS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-        <option value="custom">Model ID tùy chỉnh…</option>
       </select>
     </label>
-    {selection.choice === 'custom' && <label className="batch-field">Model ID Gemini
-      <input className="styled-input" value={selection.customModel} placeholder="gemini-…" spellCheck={false}
-        onChange={event => selection.setCustomModel(event.target.value)} disabled={disabled} />
-    </label>}
-    <p className="batch-muted">Model cần hỗ trợ Vertex AI Batch tại global và được cấp quyền trong project. Chỉ áp dụng cho job mới.</p>
+    <p className="batch-muted">Cùng danh sách model với biên tập thường. Chỉ áp dụng cho job mới.</p>
     {selection.model !== BATCH_MODEL && <p className="batch-muted">Dùng mức thinking và giới hạn đầu ra mặc định của model.</p>}
   </>;
 }

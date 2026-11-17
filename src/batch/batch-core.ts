@@ -1,9 +1,6 @@
+import { MODEL_OPTIONS, isSelectableModel } from '../ai/models';
 export const BATCH_MODEL = 'gemini-4-argon';
-export const BATCH_MODELS = [
-  { id: BATCH_MODEL, label: 'Gemini 4 Argon' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-];
+export const BATCH_MODELS = MODEL_OPTIONS;
 export function normalizeBatchModel(value: unknown): string {
   if (typeof value !== 'string' || !/^gemini-[a-z0-9][a-z0-9._-]*$/.test(value.trim())) {
     throw new Error('Model ID không hợp lệ. Nhập ID Gemini, ví dụ gemini-4-argon, không nhập URL hoặc đường dẫn.');
@@ -28,7 +25,7 @@ export interface BatchRow {
   promptHash: string;
   request: {
     contents: { role: string; parts: { text: string }[] }[];
-    generationConfig: { thinkingConfig?: { thinkingLevel: ThinkingLevel }; maxOutputTokens?: number };
+    generationConfig?: { thinkingConfig?: { thinkingLevel: ThinkingLevel }; maxOutputTokens?: number };
   };
 }
 export interface BatchResult {
@@ -106,6 +103,7 @@ export async function prepareRun(args: {
   if (!args.chapters.length) throw new Error('Chọn ít nhất một chương.');
   if (args.chapters.length > 200_000) throw new Error('Một job tối đa 200.000 chương.');
   const model = batchRunModel(args);
+  if (!isSelectableModel(model)) throw new Error('Chọn model trong danh sách hỗ trợ.');
   const id = `beta-${crypto.randomUUID()}`;
   const rows = await Promise.all(args.chapters.map(async chapter => {
     // Unique trailing marker disambiguates identical chapters without changing the shared prefix.
@@ -116,9 +114,9 @@ export async function prepareRun(args: {
       request: {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         // Use model defaults when Argon's thinking configuration is not applicable.
-        generationConfig: model === BATCH_MODEL
-          ? { thinkingConfig: { thinkingLevel: args.thinking }, maxOutputTokens: 65_536 }
-          : {},
+        ...(model === BATCH_MODEL
+          ? { generationConfig: { thinkingConfig: { thinkingLevel: args.thinking }, maxOutputTokens: 65_536 } }
+          : {}),
       },
     };
   }));
@@ -133,7 +131,18 @@ export async function prepareRun(args: {
   return run;
 }
 export function toJSONL(run: BatchRun): string {
-  return run.rows.map(row => JSON.stringify({ request: row.request })).join('\n') + '\n';
+  // Old backups may contain empty objects, which Google's JSONL importer rejects.
+  // Omit optional empty structs without altering the saved prompts or their hashes.
+  function omitEmptyStructs(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(omitEmptyStructs);
+    if (value && typeof value === 'object') {
+      const entries = Object.entries(value).map(([key, item]) => [key, omitEmptyStructs(item)] as const)
+        .filter(([, item]) => item !== undefined);
+      return entries.length ? Object.fromEntries(entries) : undefined;
+    }
+    return value;
+  }
+  return run.rows.map(row => JSON.stringify({ request: omitEmptyStructs(row.request) })).join('\n') + '\n';
 }
 export function inputObject(run: BatchRun): string { return `beta-batch/${run.id}/input.jsonl`; }
 export function outputPrefix(run: BatchRun): string { return `beta-batch/${run.id}/output/`; }

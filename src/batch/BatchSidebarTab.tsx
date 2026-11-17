@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React from 'react';
 import {
   Layers,
   RefreshCw,
@@ -15,22 +15,17 @@ import {
 import {
   BATCH_MODEL,
   batchRunModel,
-  formatDuration,
-  importDisposition,
-  parseOutputs,
-  prepareRun,
-  terminalState,
   toJSONL,
   type BatchChapter,
   type BatchRules,
   type BatchRun,
   type ThinkingLevel,
 } from './batch-core';
-import { VertexBatchClient, GoogleBatchError, authFromJSON } from './vertex-batch';
-import { loadRuns, saveRun } from './batch-store';
-import { BatchModelSettings, useBatchModel } from './BatchModelSettings';
+import type { BatchController } from './useBatchController';
+import { BatchModelSettings } from './BatchModelSettings';
 
 interface Props {
+  controller: BatchController;
   chapters: BatchChapter[];
   rules: BatchRules;
   title: string;
@@ -73,245 +68,12 @@ function downloadFile(name: string, contents: string, type = 'application/json')
 }
 
 export function BatchSidebarTab(props: Props) {
-  const modelSelection = useBatchModel();
-  const [runs, setRuns] = useState<BatchRun[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [activeId, setActiveId] = useState('');
-  const [bucket, setBucket] = useState(() => localStorage.getItem('beta-batch-bucket') || '');
-  const [thinking, setThinking] = useState<ThinkingLevel>('MEDIUM');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [busy, setBusy] = useState('');
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-  const [elapsedTimeStr, setElapsedTimeStr] = useState('');
-  const busyRef = useRef(false);
-  const selectedOnce = useRef(false);
-
-  const active = runs.find(run => run.id === activeId);
-
-  const client = () => {
-    if (!props.credentials) {
-      throw new Error('Vui lòng mở Cài đặt và nạp file Service Account JSON để dùng Batch API.');
-    }
-    return new VertexBatchClient(authFromJSON(props.credentials));
-  };
-
-  const lockedIds = new Set(
-    runs
-      .filter(run => ['submitting', 'unknown'].includes(run.phase) || (run.job && !terminalState(run.job.state)))
-      .flatMap(run => run.rows.map(row => row.chapter.id))
-  );
-
-  const available = props.chapters.filter(c => c.status !== 'editing' && !lockedIds.has(c.id));
-  const selectedChapters = available.filter(c => selected.includes(c.id));
-
-  // Load runs on mount
-  useEffect(() => {
-    loadRuns()
-      .then(saved => {
-        setRuns(saved);
-        setActiveId(saved[0]?.id || '');
-        setLoaded(true);
-      })
-      .catch(e => setError(e.message));
-  }, []);
-
-  // Auto-select pending chapters once loaded
-  useEffect(() => {
-    if (loaded && !selectedOnce.current && props.chapters.length) {
-      setSelected(available.filter(c => c.status !== 'done').map(c => c.id));
-      selectedOnce.current = true;
-    }
-  }, [loaded, props.chapters]);
-
-  // Persist run helper
-  async function persist(run: BatchRun) {
-    setRuns(previous => [run, ...previous.filter(item => item.id !== run.id)]);
-    setActiveId(run.id);
-    await saveRun(run);
-  }
-
-  // Wrap action with busy and error handling
-  async function perform(label: string, action: () => Promise<void>) {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(label);
-    setError('');
-    setMessage('');
-    try {
-      await action();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      busyRef.current = false;
-      setBusy('');
-    }
-  }
-
-  // Refresh job state and save completedAt
-  async function refresh(run: BatchRun) {
-    if (!run.job) return;
-    const job = await client().get(run.job.name);
-    const isDone = terminalState(job.state);
-    const updated: BatchRun = {
-      ...run,
-      phase: 'submitted',
-      job,
-      completedAt: isDone && !run.completedAt ? new Date().toISOString() : run.completedAt,
-    };
-    await persist(updated);
-  }
-
-  // Auto-refresh running job every 20 seconds
-  useEffect(() => {
-    if (!props.credentials || !active?.job || terminalState(active.job.state)) return;
-    const interval = window.setInterval(() => {
-      if (!busyRef.current) void perform('Đang cập nhật job…', () => refresh(active));
-    }, 20_000);
-    return () => clearInterval(interval);
-  }, [active?.id, active?.job?.state, props.credentials]);
-
-  // Real-time Execution Timer (Calculated client-side from start until completion)
-  useEffect(() => {
-    if (!active) {
-      setElapsedTimeStr('');
-      return;
-    }
-
-    const updateTimer = () => {
-      const startTime = active.startedAt || active.createdAt;
-      if (!startTime) {
-        setElapsedTimeStr('');
-        return;
-      }
-      const startMs = new Date(startTime).getTime();
-
-      // If job is already marked completed
-      if (active.completedAt) {
-        const completedMs = new Date(active.completedAt).getTime();
-        const durationMs = Math.max(0, completedMs - startMs);
-        setElapsedTimeStr(formatDuration(durationMs));
-        return;
-      }
-
-      // If job is in terminal state but completedAt not yet written
-      if (active.job && terminalState(active.job.state)) {
-        const now = Date.now();
-        const durationMs = Math.max(0, now - startMs);
-        setElapsedTimeStr(formatDuration(durationMs));
-        // Also persist completedAt
-        if (!active.completedAt) {
-          void persist({ ...active, completedAt: new Date().toISOString() });
-        }
-        return;
-      }
-
-      // Job is currently running: count up live
-      const now = Date.now();
-      const elapsedMs = Math.max(0, now - startMs);
-      setElapsedTimeStr(formatDuration(elapsedMs));
-    };
-
-    updateTimer();
-    const timerId = window.setInterval(updateTimer, 1000);
-    return () => clearInterval(timerId);
-  }, [active?.id, active?.startedAt, active?.completedAt, active?.job?.state]);
-
-  // Submit job
-  async function submit() {
-    if (!navigator.locks) {
-      throw new Error('Trình duyệt cần hỗ trợ Web Locks để đảm bảo không gửi trùng.');
-    }
-    await navigator.locks.request('beta-batch-submit', { ifAvailable: true }, async lock => {
-      if (!lock) throw new Error('Một tab khác đang gửi Batch. Hãy đợi hoàn tất.');
-      const stored = await loadRuns();
-      const idsInFlight = new Set(
-        stored
-          .filter(run => ['unknown', 'submitting'].includes(run.phase) || (run.job && !terminalState(run.job.state)))
-          .flatMap(run => run.rows.map(row => row.chapter.id))
-      );
-      if (selectedChapters.some(c => idsInFlight.has(c.id))) {
-        setRuns(stored);
-        throw new Error('Có chương đang được gửi từ tiến trình khác.');
-      }
-      await submitLocked();
-    });
-  }
-
-  async function submitLocked() {
-    const api = client();
-    const run = await prepareRun({
-      chapters: selectedChapters,
-      rules: props.rules,
-      title: props.title,
-      projectId: await api.projectId(),
-      bucket,
-      model: modelSelection.model,
-      thinking,
-      promptFor: props.promptFor,
-    });
-    localStorage.setItem('beta-batch-bucket', run.bucket);
-    await persist(run);
-    await api.upload(run);
-
-    const nowIso = new Date().toISOString();
-    const submitting: BatchRun = { ...run, phase: 'submitting', startedAt: nowIso };
-    await persist(submitting);
-
-    let submitted: BatchRun;
-    try {
-      const job = await api.create(submitting);
-      submitted = {
-        ...submitting,
-        phase: 'submitted',
-        job,
-        startedAt: submitting.startedAt || nowIso,
-      };
-    } catch (e) {
-      if (e instanceof GoogleBatchError && [400, 401, 403, 404, 422].includes(e.status)) {
-        await persist({ ...submitting, phase: 'prepared' });
-        throw new Error(`Google từ chối tạo job: ${e.message}`);
-      }
-      await persist({ ...submitting, phase: 'unknown' });
-      throw new Error(`Không xác định được trạng thái job: ${e instanceof Error ? e.message : e}`);
-    }
-    await persist(submitted);
-    setSelected([]);
-    setMessage('Đã gửi job thành công! Google đang xử lý ngầm.');
-  }
-
-  async function readOutputs(run: BatchRun, files?: string[]) {
-    const parsed = await parseOutputs(run, files || (await client().downloadOutputs(run)));
-    const updated: BatchRun = {
-      ...run,
-      results: parsed.results,
-      outputWarnings: parsed.warnings,
-      completedAt: run.completedAt || new Date().toISOString(),
-    };
-    await persist(updated);
-    setMessage(`Đã tải kết quả (${parsed.results.length} chương). Sẵn sàng nhập vào truyện.`);
-  }
-
-  const isTerminal = active?.job ? terminalState(active.job.state) : false;
-  const isRunning = active?.job ? !isTerminal : ['submitting', 'prepared'].includes(active?.phase || '');
-
-  const readyToImport =
-    active?.results?.filter(
-      result =>
-        result.text &&
-        active.rows.some(
-          row =>
-            row.chapter.id === result.chapterId &&
-            importDisposition(
-              active,
-              row,
-              props.chapters.find(c => c.id === result.chapterId),
-              props.rules
-            ) === 'ready'
-        )
-    ) || [];
-
-  const anyBusy = !!busy || !loaded;
+  const {
+    modelSelection, runs, activeId, setActiveId, active, bucket, setBucket,
+    thinking, setThinking, selected, setSelected, busy, error, message, setMessage,
+    elapsedTimeStr, lockedIds, available, selectedChapters, anyBusy,
+    ready: readyToImport, isTerminal, isRunning, perform, client, refresh, submit, readOutputs,
+  } = props.controller;
 
   return (
     <div className="batch-sidebar-tab">
